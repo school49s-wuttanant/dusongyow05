@@ -33,6 +33,12 @@
             0%, 100% { transform: translateY(0); }
             50% { transform: translateY(-10px); }
         }
+        #signature-pad {
+            border: 2px dashed #cbd5e1;
+            background-color: #fafafa;
+            cursor: crosshair;
+            touch-action: none; /* ป้องกันการเลื่อนหน้าจอขณะเขียนบนมือถือ */
+        }
     </style>
 </head>
 <body class="p-4 md:p-8">
@@ -40,7 +46,7 @@
     <div id="loading" class="loading-overlay">
         <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-600 mb-4"></div>
         <p class="text-lg font-semibold text-gray-700">กำลังประมวลผลและสร้างเอกสาร...</p>
-        <p class="text-sm text-gray-500 mt-2">กรุณารอสักครู่ ระบบกำลังสร้างไฟล์ PDF และบันทึกข้อมูลพร้อมลิงก์ลง Google Sheet</p>
+        <p class="text-sm text-gray-500 mt-2">กรุณารอสักครู่ ระบบกำลังอัปโหลดลายเซ็น สร้างไฟล์ PDF และบันทึกลิงก์ลง Google Sheet</p>
     </div>
 
     <div class="max-w-4xl mx-auto">
@@ -58,6 +64,7 @@
             </div>
 
             <form id="travelForm" class="space-y-6">
+                <!-- ข้อมูลฟอร์มหลัก -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-2">เลขที่บันทึกข้อความ</label>
@@ -170,6 +177,23 @@
                     </div>
                 </div>
 
+                <!-- ส่วนเขียนลายเซ็น -->
+                <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="text-sm font-semibold text-gray-700">ลงชื่อผู้ขออนุญาต (เซ็นใหญ่ ๆ ในกรอบด้านล่าง)</label>
+                        <button type="button" id="clear-sig" class="text-xs text-red-600 hover:text-red-800 font-semibold flex items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            ล้างลายเซ็น
+                        </button>
+                    </div>
+                    <div class="relative w-full h-40">
+                        <canvas id="signature-pad" class="w-full h-full rounded-md shadow-inner"></canvas>
+                    </div>
+                    <input type="hidden" id="signature-data" name="signature">
+                </div>
+
                 <div class="pt-4 border-t flex flex-col md:flex-row gap-4">
                     <button type="submit" id="submitBtn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition duration-200 flex justify-center items-center shadow-md">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
@@ -212,7 +236,7 @@
     </div>
 
     <script>
-        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwYZEjlsAj31pNZL8kSbcdbZoEXq06Gv89gb8A-RT3zHPsf55YPapFkO_VrSSkdTweH/exec"; 
+        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzkB_nRH0bz5aoEgt4R9f20AppOhSnr6iq8D0IEvblxaxWnKtkVa5Fvx-G6POLSrTzlRA/exec"; 
         
         // --- Telegram Configuration ---
         const TELEGRAM_BOT_TOKEN = "8315441228:AAFgUW0TzmjacMUISpoS5n3np0n4wacH778"; 
@@ -226,6 +250,97 @@
         const statusMsg = document.getElementById('statusMessage');
         const resultSection = document.getElementById('resultSection');
         const openPdfBtn = document.getElementById('openPdfBtn');
+
+        // --- Signature Pad Setup ---
+        const canvas = document.getElementById('signature-pad');
+        const ctx = canvas.getContext('2d');
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
+
+        // ปรับขนาดความกว้างตาม Container จริง
+        function resizeCanvas() {
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * window.devicePixelRatio;
+            canvas.height = rect.height * window.devicePixelRatio;
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+            ctx.strokeStyle = '#1e3a8a'; // สีน้ำเงินกรมท่า
+            ctx.lineWidth = 2.5;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        // เรียกใช้วินาทีแรกที่โหลดเว็บขึ้นมา
+        setTimeout(resizeCanvas, 300);
+
+        // ดักจับการเขียนด้วยเมาส์
+        canvas.addEventListener('mousedown', (e) => {
+            isDrawing = true;
+            const rect = canvas.getBoundingClientRect();
+            lastX = e.clientX - rect.left;
+            lastY = e.clientY - rect.top;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isDrawing) return;
+            const rect = canvas.getBoundingClientRect();
+            const currX = e.clientX - rect.left;
+            const currY = e.clientY - rect.top;
+            
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(currX, currY);
+            ctx.stroke();
+            
+            lastX = currX;
+            lastY = currY;
+        });
+
+        window.addEventListener('mouseup', () => isDrawing = false);
+
+        // ดักจับการเขียนแบบ Touch Screen (มือถือ/แท็บเล็ต)
+        canvas.addEventListener('touchstart', (e) => {
+            isDrawing = true;
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            lastX = touch.clientX - rect.left;
+            lastY = touch.clientY - rect.top;
+            e.preventDefault();
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (!isDrawing) return;
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const currX = touch.clientX - rect.left;
+            const currY = touch.clientY - rect.top;
+
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(currX, currY);
+            ctx.stroke();
+
+            lastX = currX;
+            lastY = currY;
+            e.preventDefault();
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', () => isDrawing = false);
+
+        // ล้างลายเซ็น
+        document.getElementById('clear-sig').addEventListener('click', () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            document.getElementById('signature-data').value = '';
+        });
+
+        // ตรวจสอบว่า Canvas เปล่าหรือไม่
+        function isCanvasBlank() {
+            const blank = document.createElement('canvas');
+            blank.width = canvas.width;
+            blank.height = canvas.height;
+            return canvas.toDataURL() === blank.toDataURL();
+        }
 
         function calculateDays() {
             const start = new Date(startDateInput.value);
@@ -241,6 +356,64 @@
             }
         }
 
+        startDateInput.addEventListener('change', calculateDays);
+        endDateInput.addEventListener('change', calculateDays);
+
+        // จัดการเหตุการณ์ส่งฟอร์ม
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            if (isCanvasBlank()) {
+                alert("กรุณาเซ็นชื่อก่อนบันทึกข้อมูล");
+                return;
+            }
+
+            loading.style.display = 'flex';
+            resultSection.classList.add('hidden');
+            statusMsg.classList.add('hidden');
+
+            // บันทึกภาพลายเซ็นเป็น Base64
+            const sigData = canvas.toDataURL('image/png');
+            document.getElementById('signature-data').value = sigData;
+
+            const formData = new FormData(form);
+            const dataObj = Object.fromEntries(formData.entries());
+
+            try {
+                // ส่งค่าแบบ POST (text/plain) เพื่อหลีกเลี่ยง CORS ใน Google Apps Script
+                const response = await fetch(SCRIPT_URL, {
+                    method: 'POST',
+                    mode: 'cors',
+                    headers: {
+                        'Content-Type': 'text/plain;charset=utf-8',
+                    },
+                    body: JSON.stringify(dataObj)
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    loading.style.display = 'none';
+                    openPdfBtn.href = result.pdfUrl;
+                    resultSection.classList.remove('hidden');
+                    resultSection.scrollIntoView({ behavior: 'smooth' });
+                    
+                    // ส่งแจ้งเตือน Telegram
+                    await sendTelegramNotification(dataObj, result.pdfUrl);
+
+                    form.reset();
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    totalDaysInput.value = '';
+                } else {
+                    throw new Error(result.message || "เกิดข้อผิดพลาดในการสร้างไฟล์");
+                }
+            } catch (error) {
+                loading.style.display = 'none';
+                console.error(error);
+                showStatus("ไม่สามารถรับข้อมูลไฟล์ได้ แต่ข้อมูลอาจถูกบันทึกลง Sheet แล้ว กรุณาตรวจสอบใน Google Drive", "bg-yellow-100 text-yellow-700");
+            }
+        });
+
         async function sendTelegramNotification(data, pdfUrl) {
             if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
 
@@ -248,7 +421,6 @@
                             `🏫 *โรงเรียนบ้านดุซงยอ*\n\n` +
                             `📄 *เลขที่:* ${data.doc_no}\n` +
                             `👤 *ผู้ขอ:* ${data.full_name}\n` +
-                            `👤 *พร้อมด้วย(ถ้ามี):* ${data.accompaniment}\n` +
                             `💼 *ตำแหน่ง:* ${data.position}\n` +
                             `📌 *เรื่อง:* ${data.subject}\n` +
                             `📍 *สถานที่:* ${data.location}\n` +
@@ -270,56 +442,21 @@
             }
         }
 
-        startDateInput.addEventListener('change', calculateDays);
-        endDateInput.addEventListener('change', calculateDays);
-
-        form.addEventListener('submit', async function(e) {
-            e.preventDefault();
-            loading.style.display = 'flex';
-            resultSection.classList.add('hidden');
-            statusMsg.classList.add('hidden');
-
-            const formData = new FormData(form);
-            const dataObj = Object.fromEntries(formData.entries());
-            const params = new URLSearchParams();
-            for (const pair of formData.entries()) {
-                params.append(pair[0], pair[1]);
-            }
-
-            try {
-                const response = await fetch(`${SCRIPT_URL}?${params.toString()}`, {
-                    method: 'GET',
-                    mode: 'cors'
-                });
-
-                const result = await response.json();
-
-                if (result.status === 'success') {
-                    loading.style.display = 'none';
-                    openPdfBtn.href = result.pdfUrl;
-                    resultSection.classList.remove('hidden');
-                    resultSection.scrollIntoView({ behavior: 'smooth' });
-                    
-                    // ส่งแจ้งเตือน Telegram
-                    await sendTelegramNotification(dataObj, result.pdfUrl);
-
-                    form.reset();
-                    totalDaysInput.value = '';
-                } else {
-                    throw new Error(result.message || "เกิดข้อผิดพลาดในการสร้างไฟล์");
-                }
-            } catch (error) {
-                loading.style.display = 'none';
-                console.error(error);
-                showStatus("ไม่สามารถรับข้อมูลไฟล์ได้ แต่ข้อมูลอาจถูกบันทึกลง Sheet แล้ว กรุณาตรวจสอบใน Google Drive", "bg-yellow-100 text-yellow-700");
-            }
-        });
-
         function showStatus(text, classes) {
             statusMsg.innerText = text;
             statusMsg.className = `mt-4 p-4 rounded-lg text-center font-medium ${classes}`;
             statusMsg.classList.remove('hidden');
         }
+
+        // ล้างลายเซ็นเมื่อกดปุ่มรีเซ็ตฟอร์ม
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            setTimeout(() => {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                totalDaysInput.value = '';
+                statusMsg.classList.add('hidden');
+                resultSection.classList.add('hidden');
+            }, 50);
+        });
     </script>
 </body>
 </html>
